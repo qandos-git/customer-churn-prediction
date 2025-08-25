@@ -2,10 +2,6 @@ import pandas as pd
 import json
 import logging
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s"
-)
 
 class Preprocessing:
     def __init__(self, data_path: str):
@@ -14,9 +10,14 @@ class Preprocessing:
         logging.info(f"Data loaded: {len(self.df)} rows.")
 
     def convert_location(self, location: str):
-        return self.state_to_region.get(location, None)
+        """Extract state abbreviation from 'location' and map to region."""
+        state = location.split(",")[-1].strip()
+        return self.state_to_region.get(state)
 
     def convert_user_agent(self, ua: str):
+        """Simplify user agent into browser name."""
+        if not isinstance(ua, str):
+            return "Other"
         ua = ua.lower()
         if "edg" in ua:
             return "Edge"
@@ -33,12 +34,21 @@ class Preprocessing:
 
     def feature_extraction(self, data: pd.DataFrame):
         logging.info("Starting feature extraction...")
+
+        # clean userAgent field
+        data["userAgent"] = data["userAgent"].str.strip('"')
+
+        # region mapping
         data["region"] = data["location"].apply(self.convert_location)
+
+        # browser classification
         data["userAgent_processed"] = data["userAgent"].apply(self.convert_user_agent)
-        
-        cols_to_drop = ["first_name", "last_name", "user_agent", "location"]
+
+        # drop raw identity columns
+        cols_to_drop = ["firstName", "lastName", "userAgent", "location"]
         data.drop(columns=[c for c in cols_to_drop if c in data.columns], inplace=True)
 
+        # aggregate features at user-level
         data = data.sort_values(["userId", "ts"])
         data = (
             data.groupby("userId")
@@ -54,34 +64,59 @@ class Preprocessing:
                 like_count=("page", lambda x: (x == "Thumbs Up").sum()),
                 dislike_count=("page", lambda x: (x == "Thumbs Down").sum()),
                 avg_listen_time=("length", "mean"),
-                label=("page", lambda x: int(x.isin(["Cancellation Confirmation"]).any())),
+                label=(
+                    "page",
+                    lambda x: int(x.isin(["Cancellation Confirmation"]).any()),
+                ),
             )
             .reset_index()
         )
-        data["like_ratio"] = data["like_count"] / (data["like_count"] + data["dislike_count"] + 1e-5)
+
+        # derive ratios
+        data["like_ratio"] = data["like_count"] / (
+            data["like_count"] + data["dislike_count"] + 1e-5
+        )
         data.drop(columns=["like_count", "dislike_count"], inplace=True)
+
         logging.info("Feature extraction completed.")
         return data
 
     def clean_data(self, data: pd.DataFrame):
         logging.info("Cleaning data...")
-        user_info_cols = ["location", "userAgent", "lastName", "firstName", "registration", "gender"]
+
+        # drop rows missing critical user info
+        user_info_cols = [
+            "location",
+            "userAgent",
+            "lastName",
+            "firstName",
+            "registration",
+            "gender",
+        ]
         data = data.dropna(subset=user_info_cols)
+
+        # fill missing values for song info
         data["length"].fillna(0, inplace=True)
         data["artist"].fillna("Unknown", inplace=True)
         data["song"].fillna("Unknown", inplace=True)
+
+        # drop duplicates
         data = data.drop_duplicates()
+
         logging.info(f"Data cleaned: {len(data)} rows remaining.")
         return data
 
     def preprocess_data(self):
         logging.info("Loading state to region mapping...")
-        with open("assets/state_to_region.json", "r") as f:
+        with open("src/assets/state_to_region.json", "r") as f:
             regions = json.load(f)
-        self.state_to_region = {state: region for region, states in regions.items() for state in states}
+        self.state_to_region = {
+            state: region for region, states in regions.items() for state in states
+        }
         logging.info(f"Mapping loaded: {len(self.state_to_region)} states.")
 
         self.df = self.clean_data(self.df)
         self.df = self.feature_extraction(self.df)
+
         logging.info("Preprocessing completed.")
         return self.df

@@ -7,6 +7,10 @@ PRECOMMIT = uv run pre-commit
 .DEFAULT_GOAL := help
 
 
+run:
+	$(PYTHON) main.py --train artifacts/data/train_data.json --test artifacts/data/test_data.json
+
+
 # Install all required tools
 precode:
 	wget -qO- https://astral.sh/uv/install.sh | sh
@@ -32,6 +36,8 @@ precommit:
 
 # Show available commands
 help:
+	@echo "make precode     - Install pre-code tools (uv, ruff, pre-commit)"
+	@echo "make run         - Run the main application"
 	@echo "make install     - Install dependencies with uv"
 	@echo "make lint        - Run ruff linter"
 	@echo "make format      - Format code"
